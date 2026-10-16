@@ -132,6 +132,10 @@
 
         <div id="ocr-status-box" class="hidden bg-white border p-3 rounded-xl space-y-2">
           <p id="ocr-status-text" class="text-xs font-bold text-blue-800">⏳ Analysiere Schriftkopf...</p>
+          <div id="ocr-chips-container" class="hidden space-y-1">
+            <p class="text-[11px] text-slate-500">Erkannte Textzeilen (Tippe auf das aktive Feld und wähle hier den Text):</p>
+            <div id="ocr-chips" class="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 bg-slate-50 rounded border"></div>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3 rounded-xl border">
@@ -422,7 +426,7 @@
         () => {}
       ).catch((err) => {
         console.warn("Kamera-Fehler:", err);
-        alert("Kamerazugriff blockiert. Bitte im Browser prüfen, ob der Zugriff für diese Website erlaubt ist.");
+        alert("Kamerazugriff blockiert. Bitte im Browser prüfen, ob der Zugriff erlaubt ist.");
         stopScanner();
       });
     }
@@ -481,9 +485,12 @@
       if (!file) return;
       const statusBox = document.getElementById('ocr-status-box');
       const statusText = document.getElementById('ocr-status-text');
+      const chipsContainer = document.getElementById('ocr-chips-container');
+      const chipsDiv = document.getElementById('ocr-chips');
 
       statusBox.classList.remove('hidden');
-      statusText.innerText = "⏳ KI analysiert Schriftkopf...";
+      if(chipsContainer) chipsContainer.classList.add('hidden');
+      statusText.innerText = "⏳ Analysiere Schriftkopf...";
 
       const base64DataUrl = await resizeImage(file, 1400);
 
@@ -494,14 +501,23 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ parts: [
-                { text: "Analysiere diesen technischen Zeichnungskopf. WICHTIG: Die Auftragsnummer hat immer 5 Ziffern (Beispiel: 26055 für Jahr 2026, laufende Nr 055). Extrahiere als reines JSON: {\"auftrag\": \"...\", \"zeichnung\": \"...\", \"benennung\": \"...\", \"stueck\": 1}" },
+                { text: "Analysiere diesen technischen Zeichnungskopf. WICHTIG: Die Auftragsnummer hat immer 5 Ziffern (Beispiel: 26055 für Jahr 2026, laufende Nr 055). Extrahiere als reines JSON-Objekt (ohne Markdown Code-Blocks, direkt das JSON): {\"auftrag\": \"...\", \"zeichnung\": \"...\", \"benennung\": \"...\", \"stueck\": 1}" },
                 { inline_data: { mime_type: "image/jpeg", data: base64DataUrl.split(',')[1] } }
               ]}],
               generationConfig: { responseMimeType: "application/json" }
             })
           });
+          
+          if (!res.ok) {
+            const errDetail = await res.text();
+            throw new Error(`Google API HTTP Fehler (${res.status}): ${errDetail}`);
+          }
+
           const data = await res.json();
-          const p = JSON.parse(data.candidates[0].content.parts[0].text);
+          let rawText = data.candidates[0].content.parts[0].text.trim();
+          rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+          
+          const p = JSON.parse(rawText);
           if (p.auftrag) document.getElementById('in-auftrag').value = p.auftrag;
           if (p.zeichnung) document.getElementById('in-zeichnung').value = p.zeichnung;
           if (p.benennung) document.getElementById('in-benennung').value = p.benennung;
@@ -509,10 +525,38 @@
           statusText.innerText = "✅ Schriftkopf vollautomatisch eingetragen!";
           return;
         } catch (e) {
-          statusText.innerText = "❌ KI-Fehler. Bitte API-Key prüfen.";
+          console.warn("KI-Fehler Details:", e);
+          statusText.innerText = "⚠️ KI-Fehler: Nutze lokalen Texterkennungs-Modus...";
         }
-      } else {
-        statusText.innerText = "⚠️ Bitte im Admin-Bereich einen Gemini API-Key hinterlegen!";
+      }
+
+      // Robustester Fallback: Lokale Texterkennung mit anklickbaren Textbausteinen (funktioniert immer, auch ohne funktionierende API)
+      try {
+        const result = await Tesseract.recognize(base64DataUrl, 'deu+eng');
+        const lines = result.data.text.split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(l => l.length > 2);
+
+        statusText.innerText = "✅ Text erkannt! Tippe auf ein Feld oben und klicke hier auf den passenden Text:";
+        if(chipsContainer) chipsContainer.classList.remove('hidden');
+        if(chipsDiv) {
+          chipsDiv.innerHTML = lines.map(line => {
+            const clean = line.replace(/"/g, '&quot;').replace(/'/g, '');
+            return `<button type="button" onclick="insertOcrText('${clean}')" class="bg-white border hover:bg-blue-600 hover:text-white text-xs px-2.5 py-1.5 rounded shadow-sm font-semibold">${line}</button>`;
+          }).join('');
+        }
+      } catch (err) {
+        statusText.innerText = "❌ Fehler beim Lesen des Bildes.";
+      }
+    }
+
+    function insertOcrText(text) {
+      const field = document.getElementById(activeInputId);
+      if (field) {
+        field.value = text;
+        if (activeInputId === 'in-auftrag') activeInputId = 'in-zeichnung';
+        else if (activeInputId === 'in-zeichnung') activeInputId = 'in-benennung';
+        document.getElementById(activeInputId).focus();
       }
     }
 
