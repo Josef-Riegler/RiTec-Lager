@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>RiTec | Lager-Manager</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { background: white; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen pb-20">
+
+  <!-- HEADER -->
+  <header class="bg-slate-900 text-white p-4 shadow-md flex justify-between items-center no-print">
+    <div onclick="showView('home')" class="cursor-pointer">
+      <h1 class="text-xl font-bold tracking-wide flex items-center gap-2">
+        <span>📦</span> <span>RiTec LAGER-MANAGER</span>
+      </h1>
+      <p id="user-display" class="text-xs text-emerald-400 font-semibold">Angemeldet</p>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="changeUser()" class="bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 rounded text-xs font-semibold border border-slate-700">
+        👤 Name wechseln
+      </button>
+      <button onclick="showView('home')" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-sm font-semibold">
+        🏠 Menü
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto p-4">
+
+    <!-- HAUPTMENÜ -->
+    <section id="view-home" class="space-y-5">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
+        <button onclick="startEinlagern()" class="bg-emerald-600 hover:bg-emerald-700 active:scale-95 transition text-white p-6 rounded-2xl shadow-lg flex flex-col items-center justify-center space-y-2">
+          <span class="text-5xl">📥</span>
+          <span class="text-2xl font-bold tracking-wide">EINLAGERN</span>
+          <span class="text-xs text-emerald-100 text-center">Regal scannen & Zeichnung erfassen</span>
+        </button>
+
+        <button onclick="showView('auslagern')" class="bg-amber-600 hover:bg-amber-700 active:scale-95 transition text-white p-6 rounded-2xl shadow-lg flex flex-col items-center justify-center space-y-2">
+          <span class="text-5xl">📤</span>
+          <span class="text-2xl font-bold tracking-wide">AUSGEBEN</span>
+          <span class="text-xs text-amber-100 text-center">Teile entnehmen oder Status ändern</span>
+        </button>
+
+        <button onclick="showView('suchen')" class="bg-blue-600 hover:bg-blue-700 active:scale-95 transition text-white p-6 rounded-2xl shadow-lg flex flex-col items-center justify-center space-y-2">
+          <span class="text-5xl">🔍</span>
+          <span class="text-2xl font-bold tracking-wide">TEIL SUCHEN</span>
+          <span class="text-xs text-blue-100 text-center">Lagerort finden & Datenbank einsehen</span>
+        </button>
+      </div>
+
+      <div class="bg-white p-5 rounded-2xl shadow flex flex-col sm:flex-row justify-between items-center gap-4 border border-slate-200">
+        <div>
+          <h2 class="font-bold text-lg text-slate-800">Cloud-Datenbank (Echtzeit)</h2>
+          <p class="text-sm text-slate-500">
+            Eingelagerte Positionen: <span id="stat-count" class="font-bold text-emerald-700 text-base">0</span>
+          </p>
+        </div>
+        <div class="flex gap-2 w-full sm:w-auto">
+          <button onclick="showView('suchen')" class="flex-1 sm:flex-initial bg-slate-200 hover:bg-slate-300 px-4 py-2.5 rounded-xl font-semibold text-sm">
+            📋 Alle Lagerplätze
+          </button>
+          <button onclick="openAdmin()" class="flex-1 sm:flex-initial bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-xl font-semibold text-sm">
+            🔒 Admin-Bereich (PIN)
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- EINLAGERN -->
+    <section id="view-einlagern" class="hidden bg-white p-5 rounded-2xl shadow-lg space-y-5">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h2 class="text-xl font-bold text-emerald-700">📥 Bauteil einlagern</h2>
+        <button onclick="showView('home')" class="text-slate-400 text-sm font-bold">Abbrechen ✕</button>
+      </div>
+
+      <div id="scanner-container" class="hidden bg-slate-900 p-4 rounded-xl text-white space-y-2">
+        <div class="flex justify-between items-center">
+          <span id="scanner-title" class="text-sm font-bold text-emerald-400">Scanner aktiv...</span>
+          <button onclick="stopScanner()" class="bg-red-600 px-3 py-1 rounded-lg text-xs font-bold">Schließen ✕</button>
+        </div>
+        <div id="qr-reader" class="w-full rounded-lg overflow-hidden"></div>
+      </div>
+
+      <div class="bg-slate-50 p-4 rounded-xl border space-y-3">
+        <div class="flex justify-between items-center">
+          <label class="text-sm font-bold text-slate-700 uppercase">1. Lagerort wählen</label>
+          <button type="button" onclick="startGuidedLocationScan()" class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold">
+            📷 Ort + Fach scannen
+          </button>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-slate-500 font-semibold">Lagerort / Regal *</label>
+            <div class="flex gap-1.5 mt-1">
+              <input id="in-ort" type="text" placeholder="z.B. Regal-04" class="w-full border rounded-lg p-2.5 text-sm font-bold bg-white">
+              <button type="button" onclick="startScanner('in-ort', 'Regal-QR scannen')" class="bg-slate-800 text-white px-3 rounded-lg text-xs font-bold">📷 QR</button>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-500 font-semibold">Fach / Ebene *</label>
+            <div class="flex gap-1.5 mt-1">
+              <input id="in-fach" type="text" placeholder="z.B. Ebene-2-Fach-5" class="w-full border rounded-lg p-2.5 text-sm font-bold bg-white">
+              <button type="button" onclick="startScanner('in-fach', 'Fach-QR scannen')" class="bg-slate-800 text-white px-3 rounded-lg text-xs font-bold">📷 QR</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-blue-50 p-4 rounded-xl border-2 border-blue-200 space-y-4">
+        <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
+          <div>
+            <label class="block text-sm font-bold text-blue-900 uppercase">2. Zeichnungsdaten erfassen</label>
+            <p class="text-xs text-blue-700">Schriftkopf abfotografieren:</p>
+          </div>
+          <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-xl text-sm font-bold shadow-md inline-flex items-center justify-center gap-2">
+            <span>📸 Schriftkopf abfotografieren</span>
+            <input type="file" accept="image/*" capture="environment" class="hidden" onchange="handleDrawingPhoto(event)">
+          </label>
+        </div>
+
+        <div id="ocr-status-box" class="hidden bg-white border p-3 rounded-xl space-y-2">
+          <p id="ocr-status-text" class="text-xs font-bold text-blue-800">⏳ Analysiere Schriftkopf...</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3 rounded-xl border">
+          <div>
+            <div class="flex justify-between items-center"><label class="text-xs text-slate-600 font-bold">Auftragsnummer *</label><button type="button" onclick="startSingleFieldPhotoScan('in-auftrag', 'Auftrag scannen')" class="text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 px-2 py-0.5 rounded font-bold">📷 Feld fotografieren</button></div>
+            <input id="in-auftrag" onfocus="setActiveField('in-auftrag')" type="text" placeholder="z.B. 26055" class="w-full border rounded-lg p-2.5 mt-1 font-semibold">
+          </div>
+          <div>
+            <div class="flex justify-between items-center"><label class="text-xs text-slate-600 font-bold">Zeichnungsnummer *</label><button type="button" onclick="startSingleFieldPhotoScan('in-zeichnung', 'Zeichnung scannen')" class="text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 px-2 py-0.5 rounded font-bold">📷 Feld fotografieren</button></div>
+            <input id="in-zeichnung" onfocus="setActiveField('in-zeichnung')" type="text" placeholder="z.B. ZN-88410-B" class="w-full border rounded-lg p-2.5 mt-1 font-semibold">
+          </div>
+          <div class="sm:col-span-2">
+            <div class="flex justify-between items-center"><label class="text-xs text-slate-600 font-bold">Benennung *</label><button type="button" onclick="startSingleFieldPhotoScan('in-benennung', 'Benennung scannen')" class="text-xs bg-blue-100 hover:bg-blue-200 text-blue-800 px-2 py-0.5 rounded font-bold">📷 Feld fotografieren</button></div>
+            <input id="in-benennung" onfocus="setActiveField('in-benennung')" type="text" placeholder="z.B. Antriebswelle Ø45" class="w-full border rounded-lg p-2.5 mt-1 font-semibold">
+          </div>
+          <div>
+            <label class="text-xs text-slate-600 font-bold">Stückzahl *</label>
+            <div class="flex items-center gap-1.5 mt-1">
+              <button type="button" onclick="adjustQty(-1)" class="bg-slate-200 px-3.5 py-2.5 rounded-lg font-bold text-lg">-</button>
+              <input id="in-stueck" onfocus="setActiveField('in-stueck')" type="number" min="1" value="1" class="w-full border rounded-lg p-2.5 text-center font-bold text-lg">
+              <button type="button" onclick="adjustQty(1)" class="bg-slate-200 px-3.5 py-2.5 rounded-lg font-bold text-lg">+</button>
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-slate-600 font-bold">Status *</label>
+            <select id="in-status" onchange="toggleCustomStatus()" class="w-full border rounded-lg p-2.5 mt-1 bg-white font-semibold">
+              <option value="Vormaterial">Vormaterial</option>
+              <option value="Teilfertig">Teilfertig</option>
+              <option value="Wartet auf Oberflächenbehandlung">Wartet auf Oberflächenbehandlung</option>
+              <option value="Wartet auf WBH">Wartet auf WBH</option>
+              <option value="Fertig">Fertig</option>
+              <option value="Fremdfertigung">Fremdfertigung</option>
+              <option value="MANUELL">✍️ Manueller Status...</option>
+            </select>
+          </div>
+          <div id="custom-status-box" class="hidden sm:col-span-2">
+            <label class="text-xs text-emerald-700 font-bold">Eigenen Status eingeben *</label>
+            <input id="in-status-custom" type="text" placeholder="Status eingeben..." class="w-full border-2 border-emerald-500 rounded-lg p-2.5 mt-1 font-semibold">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="text-xs text-slate-600 font-bold">Bemerkung (optional)</label>
+            <textarea id="in-bemerkung" onfocus="setActiveField('in-bemerkung')" rows="2" placeholder="Bemerkung..." class="w-full border rounded-lg p-2.5 mt-1"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <input type="file" id="single-field-file-input" accept="image/*" capture="environment" class="hidden" onchange="handleSingleFieldPhoto(event)">
+
+      <button onclick="saveEinlagern()" class="w-full bg-emerald-600 text-white font-bold py-4 rounded-xl shadow-lg text-lg">
+        ✅ JETZT EINLAGERN
+      </button>
+    </section>
+
+    <!-- AUSGEBEN -->
+    <section id="view-auslagern" class="hidden bg-white p-5 rounded-2xl shadow-lg space-y-4">
+      <div class="flex justify-between items-center border-b pb-3">
+        <h2 class="text-xl font-bold text-amber-600">📤 Bauteil ausgeben / entnehmen</h2>
+        <button onclick="showView('home')" class="text-slate-400 text-sm font-bold">Zurück ✕</button>
+      </div>
+      <div class="flex gap-2">
+        <input id="out-search" oninput="renderAuslagernList()" type="text" placeholder="Regal, Auftrag, Zeichnungsnr. oder Benennung..." class="w-full border rounded-xl p-3 text-sm">
+        <button onclick="startScanner('out-search', 'Regal-QR scannen')" class="bg-amber-600 text-white px-4 rounded-xl font-bold text-sm shrink-0">📷 QR</button>
+      </div>
+      <div id="auslagern-results" class="space-y-3 mt-4"></div>
+    </section>
+
+    <!-- SUCHEN & DATENBANK -->
+    <section id="view-suchen" class="hidden bg-white p-5 rounded-2xl shadow-lg space-y-4">
+      <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2 border-b pb-3 no-print">
+        <h2 class="text-xl font-bold text-blue-700">🔍 Lagerbestand & Datenbank</h2>
+        <div class="flex gap-2">
+          <button onclick="checkAdminBeforeAction(exportExcel)" class="bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold">
+            📊 Excel-Export (.xlsx) 🔒
+          </button>
+          <button onclick="window.print()" class="bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold">
+            🖨️ Drucken
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 no-print">
+        <input id="db-search" oninput="renderDatabase()" type="text" placeholder="🔍 Suche..." class="sm:col-span-2 border rounded-xl p-2.5 text-sm">
+        <select id="db-filter-status" onchange="renderDatabase()" class="border rounded-xl p-2.5 text-sm bg-white font-semibold">
+          <option value="">Alle Status</option>
+          <option value="Vormaterial">Vormaterial</option>
+          <option value="Teilfertig">Teilfertig</option>
+          <option value="Wartet auf Oberflächenbehandlung">Wartet auf Oberflächenbehandlung</option>
+          <option value="Wartet auf WBH">Wartet auf WBH</option>
+          <option value="Fertig">Fertig</option>
+          <option value="Fremdfertigung">Fremdfertigung</option>
+        </select>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="bg-slate-100 border-b text-slate-600 uppercase text-xs">
+              <th class="p-2.5">Lagerort / Fach</th>
+              <th class="p-2.5">Auftrag / Zeichnung</th>
+              <th class="p-2.5">Benennung</th>
+              <th class="p-2.5 text-center">Stück</th>
+              <th class="p-2.5">Status</th>
+              <th class="p-2.5">Eingelagert von / seit</th>
+              <th class="p-2.5">Bemerkung</th>
+              <th class="p-2.5 no-print">Löschen (Admin)</th>
+            </tr>
+          </thead>
+          <tbody id="db-table-body" class="divide-y divide-slate-200"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ADMIN-BEREICH -->
+    <section id="view-admin" class="hidden bg-white p-5 rounded-2xl shadow-lg space-y-6">
+      <div class="flex justify-between items-center border-b pb-3 no-print">
+        <h2 class="text-xl font-bold text-slate-800">🔒 Admin-Verwaltung (Geschützt)</h2>
+        <button onclick="showView('home')" class="text-slate-400 text-sm font-bold">Schließen ✕</button>
+      </div>
+
+      <div class="bg-slate-50 p-4 rounded-xl border space-y-3">
+        <h3 class="font-bold text-sm uppercase text-slate-700">Bestandskontrolle & Export</h3>
+        <button onclick="exportExcel()" class="bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold">
+          📊 Komplette Excel-Liste herunterladen (.xlsx)
+        </button>
+      </div>
+
+      <div class="bg-blue-50 p-4 rounded-xl border border-blue-200 space-y-3">
+        <h3 class="font-bold text-sm uppercase text-blue-900">KI-Schriftkopf-Erkennung (Google Gemini)</h3>
+        <div class="flex gap-2">
+          <input id="admin-api-key" type="password" placeholder="Google Gemini API Key..." class="w-full border rounded-lg p-2 text-sm bg-white">
+          <button onclick="saveApiKey()" class="bg-blue-600 text-white px-4 rounded-lg text-xs font-bold">Speichern</button>
+        </div>
+      </div>
+
+      <div class="bg-slate-50 p-4 rounded-xl border space-y-3">
+        <h3 class="font-bold text-sm uppercase text-slate-700">QR-Codes für Regale & Fächer</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input id="qr-gen-ort" type="text" placeholder="Regal-01" class="border rounded-lg p-2 text-sm">
+          <input id="qr-gen-fach" type="text" placeholder="Ebene-1-Fach-1" class="border rounded-lg p-2 text-sm">
+          <button onclick="generateShelfQrCodes()" class="bg-slate-800 text-white rounded-lg p-2 text-xs font-bold">🏷️ Erzeugen</button>
+        </div>
+        <div id="qr-print-area" class="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getDatabase, ref, set, onValue, remove, push } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyApbfdp71EPu3PUApyDxgusCxdJeSClnNc",
+      authDomain: "lager-ritec.firebaseapp.com",
+      databaseURL: "https://lager-ritec-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "lager-ritec",
+      storageBucket: "lager-ritec.firebasestorage.app",
+      messagingSenderId: "1078961941790",
+      appId: "1:1078961941790:web:194c369192ca32f7382d0f",
+      measurementId: "G-QVEEQCPPWE"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    window.dbRef = ref(db, 'inventory');
+    window.dbWrite = set;
+    window.dbPush = push;
+    window.dbRemove = remove;
+    window.dbOnValue = onValue;
+    window.getDatabaseInstance = db;
+
+    initFirebaseSync();
+  </script>
+
+  <script>
+    let inventory = [];
+    let currentUser = localStorage.getItem('ritec_lager_user') || '';
+    let geminiApiKey = localStorage.getItem('lager_gemini_key') || '';
+    let isAdminUnlocked = false;
+    let html5QrCode = null;
+    let activeInputId = 'in-zeichnung';
+    const ADMIN_PIN = "167943";
+
+    function checkUser() {
+      if (!currentUser || currentUser.trim() === '') {
+        let name = prompt("👤 Bitte gib deinen Namen oder dein Kürzel ein (z.B. Max M.):", "");
+        if (name && name.trim().length > 0) {
+          currentUser = name.trim();
+          localStorage.setItem('ritec_lager_user', currentUser);
+        } else {
+          currentUser = "Unbekannt";
+        }
+      }
+      document.getElementById('user-display').innerText = `Angemeldet als: ${currentUser}`;
+    }
+
+    function changeUser() {
+      let name = prompt("👤 Neuen Namen / Kürzel eingeben:", currentUser);
+      if (name && name.trim().length > 0) {
+        currentUser = name.trim();
+        localStorage.setItem('ritec_lager_user', currentUser);
+        document.getElementById('user-display').innerText = `Angemeldet als: ${currentUser}`;
+      }
+    }
+
+    function initFirebaseSync() {
+      checkUser();
+      if (!window.dbOnValue) {
+        setTimeout(initFirebaseSync, 300);
+        return;
+      }
+      window.dbOnValue(window.dbRef, (snapshot) => {
+        const data = snapshot.val();
+        inventory = [];
+        if (data) {
+          Object.keys(data).forEach(key => {
+            inventory.push({ firebaseKey: key, ...data[key] });
+          });
+        }
+        inventory.sort((a, b) => b.id - a.id);
+        document.getElementById('stat-count').innerText = inventory.length;
+        if (!document.getElementById('view-suchen').classList.contains('hidden')) renderDatabase();
+        if (!document.getElementById('view-auslagern').classList.contains('hidden')) renderAuslagernList();
+      });
+    }
+
+    function setActiveField(id) { activeInputId = id; }
+
+    function adjustQty(delta) {
+      const el = document.getElementById('in-stueck');
+      const val = (parseInt(el.value) || 1) + delta;
+      el.value = val < 1 ? 1 : val;
+    }
+
+    function showView(view) {
+      stopScanner();
+      ['home', 'einlagern', 'auslagern', 'suchen', 'admin'].forEach(v => {
+        document.getElementById('view-' + v).classList.add('hidden');
+      });
+      document.getElementById('view-' + view).classList.remove('hidden');
+      if (view === 'suchen') renderDatabase();
+      if (view === 'auslagern') renderAuslagernList();
+      if (view === 'admin') document.getElementById('admin-api-key').value = geminiApiKey;
+    }
+
+    function startEinlagern() {
+      document.getElementById('in-ort').value = '';
+      document.getElementById('in-fach').value = '';
+      document.getElementById('in-auftrag').value = '';
+      document.getElementById('in-zeichnung').value = '';
+      document.getElementById('in-benennung').value = '';
+      document.getElementById('in-stueck').value = 1;
+      document.getElementById('in-status').value = 'Vormaterial';
+      document.getElementById('in-bemerkung').value = '';
+      document.getElementById('ocr-status-box').classList.add('hidden');
+      toggleCustomStatus();
+      showView('einlagern');
+    }
+
+    function toggleCustomStatus() {
+      const sel = document.getElementById('in-status').value;
+      document.getElementById('custom-status-box').classList.toggle('hidden', sel !== 'MANUELL');
+    }
+
+    function startGuidedLocationScan() {
+      startScanner('in-ort', '1/2: Regal-QR scannen', () => {
+        setTimeout(() => startScanner('in-fach', '2/2: Fach-QR scannen'), 400);
+      });
+    }
+
+    function startScanner(targetFieldId, titleText, callback = null) {
+      document.getElementById('scanner-container').classList.remove('hidden');
+      document.getElementById('scanner-title').innerText = titleText;
+      if (html5QrCode) stopScanner();
+
+      html5QrCode = new Html5Qrcode("qr-reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (text) => {
+          document.getElementById(targetFieldId).value = text;
+          if (targetFieldId === 'out-search') renderAuslagernList();
+          stopScanner();
+          if (callback) callback();
+        },
+        () => {}
+      ).catch(() => {
+        alert("Kamerazugriff erfordert HTTPS oder localhost.");
+        stopScanner();
+      });
+    }
+
+    function stopScanner() {
+      if (html5QrCode) {
+        html5QrCode.stop().then(() => { html5QrCode.clear(); html5QrCode = null; }).catch(() => {});
+      }
+      document.getElementById('scanner-container').classList.add('hidden');
+    }
+
+    function startSingleFieldPhotoScan(fieldId, title) {
+      setActiveField(fieldId);
+      document.getElementById('single-field-file-input').click();
+    }
+
+    async function handleSingleFieldPhoto(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const field = document.getElementById(activeInputId);
+      if (!field) return;
+
+      field.value = "⏳ Lese Text...";
+      try {
+        const base64DataUrl = await resizeImage(file, 1000);
+        if (geminiApiKey) {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [
+                { text: "Extrahiere nur den genauen Textwert für dieses spezifische Feld aus dem Foto. Antworte nur mit dem reinen Text." },
+                { inline_data: { mime_type: "image/jpeg", data: base64DataUrl.split(',')[1] } }
+              ]}]
+            })
+          });
+          const data = await res.json();
+          field.value = data.candidates[0].content.parts[0].text.trim();
+          return;
+        }
+        const result = await Tesseract.recognize(base64DataUrl, 'deu+eng');
+        field.value = result.data.text.replace(/\r?\n/g, ' ').trim();
+      } catch (e) {
+        field.value = "";
+        alert("Konnte Text nicht erkennen.");
+      }
+    }
+
+    async function handleDrawingPhoto(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const statusBox = document.getElementById('ocr-status-box');
+      const statusText = document.getElementById('ocr-status-text');
+
+      statusBox.classList.remove('hidden');
+      statusText.innerText = "⏳ KI analysiert Schriftkopf...";
+
+      const base64DataUrl = await resizeImage(file, 1400);
+
+      if (geminiApiKey) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [
+                { text: "Analysiere diesen technischen Zeichnungskopf. WICHTIG: Die Auftragsnummer hat immer 5 Ziffern (Beispiel: 26055 für Jahr 2026, laufende Nr 055). Extrahiere als reines JSON: {\"auftrag\": \"...\", \"zeichnung\": \"...\", \"benennung\": \"...\", \"stueck\": 1}" },
+                { inline_data: { mime_type: "image/jpeg", data: base64DataUrl.split(',')[1] } }
+              ]}],
+              generationConfig: { responseMimeType: "application/json" }
+            })
+          });
+          const data = await res.json();
+          const p = JSON.parse(data.candidates[0].content.parts[0].text);
+          if (p.auftrag) document.getElementById('in-auftrag').value = p.auftrag;
+          if (p.zeichnung) document.getElementById('in-zeichnung').value = p.zeichnung;
+          if (p.benennung) document.getElementById('in-benennung').value = p.benennung;
+          if (p.stueck) document.getElementById('in-stueck').value = p.stueck;
+          statusText.innerText = "✅ Schriftkopf vollautomatisch eingetragen!";
+          return;
+        } catch (e) {
+          statusText.innerText = "❌ KI-Fehler. Bitte API-Key prüfen.";
+        }
+      } else {
+        statusText.innerText = "⚠️ Bitte im Admin-Bereich einen Gemini API-Key hinterlegen!";
+      }
+    }
+
+    function resizeImage(file, maxWidth) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let w = img.width, h = img.height;
+            if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth; }
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/jpeg', 0.85));
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function saveEinlagern() {
+      const ort = document.getElementById('in-ort').value.trim();
+      const fach = document.getElementById('in-fach').value.trim();
+      const auftrag = document.getElementById('in-auftrag').value.trim();
+      const zeichnung = document.getElementById('in-zeichnung').value.trim();
+      const benennung = document.getElementById('in-benennung').value.trim();
+      const stueck = parseInt(document.getElementById('in-stueck').value) || 0;
+      let status = document.getElementById('in-status').value;
+      if (status === 'MANUELL') status = document.getElementById('in-status-custom').value.trim() || 'Sonstiges';
+      const bemerkung = document.getElementById('in-bemerkung').value.trim();
+
+      if (!ort || !fach || !auftrag || !zeichnung || !benennung || stueck <= 0) {
+        alert("Bitte alle Pflichtfelder ausfüllen!");
+        return;
+      }
+
+      const now = new Date();
+      const newItem = {
+        id: Date.now(),
+        ort, fach, auftrag, zeichnung, benennung, stueck, status, bemerkung,
+        erfasser: currentUser,
+        datum: now.toLocaleDateString('de-AT') + ', ' + now.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
+      };
+
+      const newRef = window.dbPush(window.dbRef);
+      window.dbWrite(newRef, newItem).then(() => {
+        alert(`✅ Eingelagert auf ${ort} / ${fach}`);
+        showView('home');
+      });
+    }
+
+    function renderAuslagernList() {
+      const q = document.getElementById('out-search').value.toLowerCase();
+      const container = document.getElementById('auslagern-results');
+      const filtered = inventory.filter(i => `${i.ort} ${i.fach} ${i.auftrag} ${i.zeichnung} ${i.benennung}`.toLowerCase().includes(q));
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<p class="text-sm text-slate-500 italic">Keine Teile gefunden.</p>`;
+        return;
+      }
+
+      container.innerHTML = filtered.map(item => `
+        <div class="border rounded-xl p-3.5 bg-slate-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div>
+            <span class="bg-slate-900 text-white text-xs font-bold px-2 py-1 rounded">${item.ort} | ${item.fach}</span>
+            <span class="ml-1 text-xs font-bold px-2 py-1 rounded bg-blue-100 text-blue-800">${item.status}</span>
+            <h3 class="font-bold text-base mt-2">${item.benennung} <span class="text-emerald-700">(${item.stueck} Stk.)</span></h3>
+            <p class="text-xs text-slate-600">Auftrag: <b>${item.auftrag}</b> | Zeichnung: <b>${item.zeichnung}</b></p>
+            <p class="text-[11px] text-slate-400">Eingelagert von: ${item.erfasser || 'Unbekannt'} am ${item.datum}</p>
+          </div>
+          <div class="flex gap-2 w-full sm:w-auto">
+            <button onclick="entnehmen('${item.firebaseKey}', false, ${item.stueck}, '${item.benennung}')" class="flex-1 bg-amber-500 text-white px-3 py-2 rounded-lg text-xs font-bold">Teilmenge</button>
+            <button onclick="entnehmen('${item.firebaseKey}', true, ${item.stueck}, '${item.benennung}')" class="flex-1 bg-red-600 text-white px-3 py-2 rounded-lg text-xs font-bold">Ausbuchen</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function entnehmen(firebaseKey, komplett, currentStueck, benennung) {
+      const itemRef = ref(window.getDatabaseInstance, 'inventory/' + firebaseKey);
+      if (komplett) {
+        if (!confirm(`"${benennung}" komplett aus dem Lager entfernen?`)) return;
+        window.dbRemove(itemRef);
+      } else {
+        const menge = parseInt(prompt(`Menge entnehmen (aktuell ${currentStueck}):`, "1"));
+        if (!menge || menge <= 0) return;
+        if (menge >= currentStueck) {
+          window.dbRemove(itemRef);
+        } else {
+          const updatedStueck = currentStueck - menge;
+          window.dbWrite(ref(window.getDatabaseInstance, `inventory/${firebaseKey}/stueck`), updatedStueck);
+        }
+      }
+      renderAuslagernList();
+    }
+
+    function renderDatabase() {
+      const q = document.getElementById('db-search').value.toLowerCase();
+      const statusFilter = document.getElementById('db-filter-status').value;
+      const tbody = document.getElementById('db-table-body');
+
+      const filtered = inventory.filter(i => {
+        const matchText = `${i.ort} ${i.fach} ${i.auftrag} ${i.zeichnung} ${i.benennung} ${i.bemerkung}`.toLowerCase().includes(q);
+        const matchStatus = !statusFilter || i.status === statusFilter;
+        return matchText && matchStatus;
+      });
+
+      tbody.innerHTML = filtered.map(i => `
+        <tr class="hover:bg-slate-50">
+          <td class="p-2.5 font-bold">${i.ort}<br><span class="text-xs text-slate-500">${i.fach}</span></td>
+          <td class="p-2.5"><b>${i.auftrag}</b><br><span class="text-xs text-slate-500">${i.zeichnung}</span></td>
+          <td class="p-2.5 font-medium">${i.benennung}</td>
+          <td class="p-2.5 text-center font-bold">${i.stueck}</td>
+          <td class="p-2.5"><span class="px-2 py-1 rounded text-xs bg-slate-200">${i.status}</span></td>
+          <td class="p-2.5 text-xs text-slate-600"><b>${i.erfasser || 'Unbekannt'}</b><br>${i.datum}</td>
+          <td class="p-2.5 text-xs text-slate-600">${i.bemerkung || '-'}</td>
+          <td class="p-2.5 no-print"><button onclick="checkAdminBeforeAction(() => { window.dbRemove(ref(window.getDatabaseInstance, 'inventory/' + '${i.firebaseKey}')); })" class="text-red-600 font-bold text-xs">🗑️ Löschen</button></td>
+        </tr>
+      `).join('');
+    }
+
+    function checkAdminBeforeAction(actionCallback) {
+      if (isAdminUnlocked) {
+        actionCallback();
+        return;
+      }
+      const pin = prompt("🔒 Admin-PIN erforderlich:", "");
+      if (pin === ADMIN_PIN) {
+        isAdminUnlocked = true;
+        actionCallback();
+      } else if (pin !== null) {
+        alert("❌ Falscher PIN!");
+      }
+    }
+
+    function openAdmin() {
+      checkAdminBeforeAction(() => {
+        showView('admin');
+      });
+    }
+
+    function saveApiKey() {
+      geminiApiKey = document.getElementById('admin-api-key').value.trim();
+      localStorage.setItem('lager_gemini_key', geminiApiKey);
+      alert("✅ API-Key gespeichert!");
+    }
+
+    function generateShelfQrCodes() {
+      const ort = document.getElementById('qr-gen-ort').value.trim() || 'Regal-01';
+      const fach = document.getElementById('qr-gen-fach').value.trim() || 'Ebene-1';
+      const area = document.getElementById('qr-print-area');
+      area.innerHTML = '';
+      [
+        { label: "Lagerort", code: ort },
+        { label: "Fach", code: fach }
+      ].forEach((item, idx) => {
+        const card = document.createElement('div');
+        card.className = "border-2 border-slate-800 rounded-xl p-3 flex flex-col items-center bg-white";
+        card.innerHTML = `<span class="text-[10px] font-bold text-slate-500">${item.label}</span><div id="qr-box-${idx}" class="my-2"></div><span class="font-bold text-sm">${item.code}</span>`;
+        area.appendChild(card);
+        new QRCode(document.getElementById(`qr-box-${idx}`), { text: item.code, width: 100, height: 100 });
+      });
+    }
+
+    function exportExcel() {
+      const exportRows = inventory.map(i => ({
+        "Lagerort": i.ort, "Fach": i.fach, "Auftrag": i.auftrag, "Zeichnung": i.zeichnung,
+        "Benennung": i.benennung, "Stückzahl": i.stueck, "Status": i.status, "Bemerkung": i.bemerkung,
+        "Eingelagert von": i.erfasser || "Unbekannt", "Eingelagert seit": i.datum
+      }));
+      const ws = XLSX.utils.json_to_sheet(exportRows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Lager");
+      XLSX.writeFile(wb, `RiTec_Lagerbestand_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    }
+  </script>
+</body>
+</html>
